@@ -122,10 +122,15 @@ public class SnakeBody : MonoBehaviour
         MoveSnakeHead();
     }
 
+    int posv2pos(Vector3 posv)
+    {
+        return (int)(MathF.Floor(posv.x) + DataManagerStatic.GetPlayAreaWidth() / 2) + 
+            (int)(MathF.Floor(posv.y) + DataManagerStatic.GetPlayAreaHeight() / 2) * DataManagerStatic.GetPlayAreaWidth();
+    }
+
     void AddSnakeCollider(Vector3 posv)
     {
-        int pos = (int)(posv.x - 0.5f + DataManagerStatic.GetPlayAreaWidth() / 2) + 
-            (int)(posv.y - 0.5f + DataManagerStatic.GetPlayAreaHeight() / 2) * DataManagerStatic.GetPlayAreaWidth();
+        int pos = posv2pos(posv);
         if (snakeColliders.ContainsKey(pos)) return;
         snakeColliders.Add(pos, Instantiate(snakeCollider, posv, Quaternion.identity));
         feedManager.RemoveFreePos(pos);
@@ -133,8 +138,7 @@ public class SnakeBody : MonoBehaviour
 
     void RemoveSnakeCollider(Vector3 posv)
     {
-        int pos = (int)(posv.x - 0.5f + DataManagerStatic.GetPlayAreaWidth() / 2) + 
-            (int)(posv.y - 0.5f + DataManagerStatic.GetPlayAreaHeight() / 2) * DataManagerStatic.GetPlayAreaWidth();
+        int pos = posv2pos(posv);
         if (!snakeColliders.ContainsKey(pos)) return;
         Destroy(snakeColliders[pos]);
         snakeColliders.Remove(pos);
