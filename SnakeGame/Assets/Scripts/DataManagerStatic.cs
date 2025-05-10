@@ -1,13 +1,13 @@
 using System;
+using System.Text;
 using UnityEngine;
 
 public static class DataManagerStatic
 {
     static int score = 0;
-    static int best = 0;
-    static int speed = 1;
-    static int playAreaHeight = 1;
-    static int playAreaWidth = 1;
+    static int playAreaHeight = 15;
+    static int playAreaWidth = 15;
+    static StringBuilder playAreaState = new StringBuilder(new string('0', (playAreaHeight + 2) * (playAreaWidth + 2)));
 
     public static void AddScore(int value)
     {
@@ -24,33 +24,12 @@ public static class DataManagerStatic
         score = 0;
     }
 
-    public static void UpdateBest()
-    {
-        best = Math.Max(best, score);
-    }
-
-    public static int GetBest()
-    {
-        return best;
-    }
-
     public static void SetPlayAreaHeight(int value)
     {
         playAreaHeight = value;
     }
 
     public static int GetPlayAreaHeight()
-    {
-        switch (playAreaHeight)
-        {
-            case 0: return 7;
-            case 1: return 11;
-            case 2: return 15;
-            default: return -1;
-        }
-    }
-
-    public static int GetPlayAreaHeightValue()
     {
         return playAreaHeight;
     }
@@ -62,33 +41,35 @@ public static class DataManagerStatic
 
     public static int GetPlayAreaWidth()
     {
-        switch (playAreaWidth)
-        {
-            case 0: return 7;
-            case 1: return 11;
-            case 2: return 15;
-            default: return -1;
-        }
-    }
-
-    public static int GetPlayAreaWidthValue()
-    {
         return playAreaWidth;
     }
 
-    public static void SetSpeed(int value)
+    public static void ChangeState(Vector3 posv, char obj)
     {
-        speed = value;
+        int pos = (int) (posv.x - 0.5f) + playAreaWidth / 2 + 1 + 
+                ((int) (posv.y - 0.5f) + playAreaHeight / 2 + 1) * (playAreaWidth + 2);
+        if (pos < 0 || (playAreaWidth + 2) * (playAreaHeight + 2) <= pos)
+        {
+            Console.WriteLine("Invalid pos for ChangeState");
+        }
+        playAreaState[pos] = obj;
     }
 
-    public static float GetSpeed()
+    public static void InitState()
     {
-        return (float) (speed + 1);
+        for (int i = 0; i < playAreaHeight + 2; i++) {
+            for (int j = 0; j < playAreaWidth + 2; j++) {
+                int pos = i * (playAreaWidth + 2) + j;
+                if (i == 0 || i == playAreaHeight + 1) playAreaState[pos] = '0';
+                else if (j == 0 || j == playAreaWidth + 1) playAreaState[pos] = '0';
+                else playAreaState[pos] = '1';
+            }
+        }
     }
 
-    public static int GetSpeedValue()
+    public static StringBuilder GetAreaState()
     {
-        return speed;
+        return playAreaState;
     }
 
 }

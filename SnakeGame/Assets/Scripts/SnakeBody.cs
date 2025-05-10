@@ -2,112 +2,131 @@ using System;
 using UnityEngine;
 using System.Collections.Generic;
 
+[DefaultExecutionOrder(-1)]
 public class SnakeBody : MonoBehaviour
 {
     [SerializeField] LineRenderer lineRenderer;
-    [SerializeField] GameObject snakeHead;
-    [SerializeField] GameObject snakeCollider;
-    [SerializeField] GameObject feed;
     [SerializeField] FeedManager feedManager;
 
-    private float speed = 1.0f;
-    private Vector3 head = new Vector3(1.5f, 0.5f, 0);
-    private Vector3 tail = new Vector3(-0.5f, 0.5f, 0);
-    private Vector3 dir = Vector3.right;
+    private SocketServer server = new SocketServer();
+
+    private Vector3 head;
+    private Vector3 tail;
+    private Vector3 dir;
     private Queue<Tuple<Vector3, Vector3>> turns = new Queue<Tuple<Vector3, Vector3>>(); 
-    private Dictionary<int, GameObject> snakeColliders = new Dictionary<int, GameObject>();
+    private HashSet<int> snakeColliders = new HashSet<int>();
+    private bool isPlaying = false;
     
-    void Start()
+    void Awake()
     {
-        speed = DataManagerStatic.GetSpeed();
-        lineRenderer.SetPositions(new Vector3[] {tail, head});
-        snakeHead.transform.position = head - 0.05f * dir;
-        for (float i = tail.x; i <= head.x - 1; i++) AddSnakeCollider(new Vector3(i, tail.y, 0f));
+        server.StartServer(5000);
     }
 
     void Update()
     {
-        UpdatePosDir();
-        UpdateBody();
-    }
-
-    Tuple<Vector3, float> SnapToGrid(Vector3 pos, float dif)
-    {
-        float intX = MathF.Floor(pos.x);
-        float intY = MathF.Floor(pos.y);
-        if (dir == Vector3.left || dir == Vector3.right) dif += dir.x * (intX + 0.5f - pos.x);
-        else dif += dir.y * (intY + 0.5f - pos.y);
-        return Tuple.Create(new Vector3(intX + 0.5f, intY + 0.5f, 0f), dif);
-    }
-
-    void UpdatePosDir()
-    {
-        Vector3 new_dir = dir;
-        if (Input.GetKeyDown(KeyCode.LeftArrow)) new_dir = Vector3.left;
-        else if (Input.GetKeyDown(KeyCode.RightArrow)) new_dir = Vector3.right;
-        else if (Input.GetKeyDown(KeyCode.UpArrow)) new_dir = Vector3.up;
-        else if (Input.GetKeyDown(KeyCode.DownArrow)) new_dir = Vector3.down;
-        float dif = Time.deltaTime * speed;
-        if (dir != new_dir && dir + new_dir != Vector3.zero) 
+        if (!isPlaying) 
         {
-            UpdateAddSnakeCollider(head, head + dir * dif);
-            head += dir * dif;
-            (head, dif) = SnapToGrid(head, dif);
-            turns.Enqueue(new Tuple<Vector3, Vector3>(head, dir));
-            UpdateAddSnakeCollider(head, head + new_dir);
-            head += new_dir;
-            dif += 1f;
-            dir = new_dir;
+            InitGame();
+            return;
         }
+        char? msg = server.Recv();
+        if (msg == null) return;
+        float reward = UpdatePosDir(msg);
+        if (0 <= reward)
+        {
+            UpdateBody();
+            reward += feedManager.FeedReward(head);
+            Tuple<int, float> feedResult = feedManager.CheckFeed(posv2pos(head));
+            LengthenBody(feedResult.Item1);
+            reward += feedResult.Item2;
+            reward += CheckCollide();
+            reward += CheckArea();
+        }
+        server.Send($"{DataManagerStatic.GetAreaState()}{reward:000.00}{msg}{(isPlaying ? 'T' : 'F')}");
+    }
+
+    void OnApplicationQuit()
+    {
+        server.StopServer();
+    }
+
+    void InitGame()
+    {
+        if (isPlaying) return;
+        isPlaying = true;
+        DataManagerStatic.InitState();
+        DataManagerStatic.ResetScore();
+        feedManager.Initialize();
+        feedManager.PlaceFeed();
+        snakeColliders.Clear();
+        turns.Clear();
+        
+        head = new Vector3(1.5f, 0.5f, 0);
+        tail = new Vector3(-0.5f, 0.5f, 0);
+        dir = Vector3.right;
+        lineRenderer.SetPositions(new Vector3[] {tail, head});
+        for (float i = tail.x; i <= head.x - 1; i++) {
+            AddSnakeCollider(new Vector3(i, tail.y, 0f));
+            DataManagerStatic.ChangeState(new Vector3(i, tail.y, 0f), '4');
+        }
+        DataManagerStatic.ChangeState(head, '3');
+        Console.WriteLine("Game Initialized");
+    }
+
+    float CheckCollide()
+    {
+        int pos = posv2pos(head);
+        if (snakeColliders.Contains(pos)) {
+            isPlaying = false;
+            Console.WriteLine("Hit Body");
+            return -10.0f;
+        }
+        return 0.0f;
+    }
+
+    float CheckArea()
+    {
+        bool check = true;
+        int height = DataManagerStatic.GetPlayAreaHeight();
+        int width = DataManagerStatic.GetPlayAreaWidth();
+        if (head.x < -width / 2 || width / 2 + 1 <  head.x) check = false;
+        if (head.y < -height / 2 || height / 2 + 1 < head.y) check = false;
+        if (!check) {
+            isPlaying = false;
+            Console.WriteLine("Out of Area");
+            return -10.0f;
+        }
+        return 0.0f;
+    }
+
+    float UpdatePosDir(char? cmd)
+    {
+        if (cmd == null) return 0.0f;
+        Vector3 new_dir = dir;
+        switch (cmd)
+        {
+            case 'L': new_dir = Vector3.left; break;
+            case 'R': new_dir = Vector3.right; break;
+            case 'U': new_dir = Vector3.up; break;
+            case 'D': new_dir = Vector3.down; break;
+            default: return 0.0f;
+        }
+        if (dir + new_dir == Vector3.zero) return -5.0f;
+        AddSnakeCollider(head);
+        DataManagerStatic.ChangeState(head, '4');
+        if (dir != new_dir) turns.Enqueue(new Tuple<Vector3, Vector3>(head, dir));
+        head += new_dir;
+        DataManagerStatic.ChangeState(head, '3');
+        dir = new_dir;
+        RemoveSnakeCollider(tail);
+        DataManagerStatic.ChangeState(tail, '1');
+        if (turns.Count == 0) tail += dir;
         else 
         {
-            UpdateAddSnakeCollider(head, head + dir * dif);
-            head += dir * dif;
+            tail += turns.Peek().Item2;
+            if (tail == turns.Peek().Item1) turns.Dequeue();
         }
-        while (true)
-        {
-            if (turns.Count == 0)
-            {
-                UpdateRemoveSnakeCollider(tail, tail + dir * dif);
-                tail += dir * dif;
-                break;
-            }
-            else 
-            {
-                if (turns.Peek().Item2 == Vector3.left || turns.Peek().Item2 == Vector3.right)
-                {
-                    if (dif < Math.Abs(turns.Peek().Item1.x - tail.x)) 
-                    {
-                        UpdateRemoveSnakeCollider(tail, tail + dif * turns.Peek().Item2);
-                        tail += dif * turns.Peek().Item2;
-                        break;
-                    }
-                    else 
-                    {
-                        dif -= Math.Abs(turns.Peek().Item1.x - tail.x);
-                        UpdateRemoveSnakeCollider(tail, tail + Math.Abs(turns.Peek().Item1.x - tail.x) * turns.Peek().Item2);
-                        tail += Math.Abs(turns.Peek().Item1.x - tail.x) * turns.Peek().Item2;
-                        turns.Dequeue();
-                    }
-                }
-                else
-                {
-                    if (dif < Math.Abs(turns.Peek().Item1.y - tail.y)) 
-                    {
-                        UpdateRemoveSnakeCollider(tail, tail + dif * turns.Peek().Item2);
-                        tail += dif * turns.Peek().Item2;
-                        break;
-                    }
-                    else 
-                    {
-                        dif -= Math.Abs(turns.Peek().Item1.y - tail.y);
-                        UpdateRemoveSnakeCollider(tail, tail + Math.Abs(turns.Peek().Item1.y - tail.y) * turns.Peek().Item2);
-                        tail += Math.Abs(turns.Peek().Item1.y - tail.y) * turns.Peek().Item2;
-                        turns.Dequeue();
-                    }
-                }
-            }
-        }      
+        return 0.0f;
     }
 
     void UpdateBody()
@@ -119,7 +138,6 @@ public class SnakeBody : MonoBehaviour
         poses[turns.Count + 1] = head;
         lineRenderer.positionCount = turns.Count + 2;
         lineRenderer.SetPositions(poses);
-        MoveSnakeHead();
     }
 
     int posv2pos(Vector3 posv)
@@ -131,78 +149,20 @@ public class SnakeBody : MonoBehaviour
     void AddSnakeCollider(Vector3 posv)
     {
         int pos = posv2pos(posv);
-        if (snakeColliders.ContainsKey(pos)) return;
-        snakeColliders.Add(pos, Instantiate(snakeCollider, posv, Quaternion.identity));
+        if (snakeColliders.Contains(pos)) return;
+        snakeColliders.Add(pos);
         feedManager.RemoveFreePos(pos);
     }
 
     void RemoveSnakeCollider(Vector3 posv)
     {
         int pos = posv2pos(posv);
-        if (!snakeColliders.ContainsKey(pos)) return;
-        Destroy(snakeColliders[pos]);
+        if (!snakeColliders.Contains(pos)) return;
         snakeColliders.Remove(pos);
         feedManager.AddFreePos(pos);
     }
 
-    void UpdateAddSnakeCollider(Vector3 oldPos, Vector3 newPos)
-    {
-        Vector3 dif = newPos - oldPos;
-        if (dif.x > 0)
-        {
-            float x = MathF.Floor(oldPos.x);
-            for (int i = 0; x + i <= newPos.x - 1; i++) AddSnakeCollider(new Vector3(x + i + 0.5f, newPos.y, 0f));
-        }
-        if (dif.x < 0)
-        {
-            float x = MathF.Floor(oldPos.x);
-            for (int i = 0; x - i >= newPos.x; i++) AddSnakeCollider(new Vector3(x - i + 0.5f, newPos.y, 0f)); 
-        }
-        if (dif.y > 0)
-        {
-            float y = MathF.Floor(oldPos.y);
-            for (int i = 0; y + i <= newPos.y - 1; i++) AddSnakeCollider(new Vector3(newPos.x, y + i + 0.5f, 0f));
-        }
-        if (dif.y < 0)
-        {
-            float y = MathF.Floor(oldPos.y);
-            for (int i = 0; y - i >= newPos.y; i++) AddSnakeCollider(new Vector3(newPos.x, y - i + 0.5f, 0f)); 
-        }
-    }
-
-    void UpdateRemoveSnakeCollider(Vector3 oldPos, Vector3 newPos)
-    {
-        Vector3 dif = newPos - oldPos;
-        if (dif.x > 0)
-        {
-            float x = MathF.Floor(oldPos.x);
-            for (int i = 0; x + i < MathF.Floor(newPos.x); i++) RemoveSnakeCollider(new Vector3(x + i + 0.5f, newPos.y, 0f));
-        }
-        if (dif.x < 0)
-        {
-            float x = MathF.Floor(oldPos.x);
-            for (int i = 0; x - i > newPos.x; i++) RemoveSnakeCollider(new Vector3(x - i + 0.5f, newPos.y, 0f)); 
-        }
-        if (dif.y > 0)
-        {
-            float y = MathF.Floor(oldPos.y);
-            for (int i = 0; y + i < MathF.Floor(newPos.y); i++) RemoveSnakeCollider(new Vector3(newPos.x, y + i + 0.5f, 0f));
-        }
-        if (dif.y < 0)
-        {
-            float y = MathF.Floor(oldPos.y);
-            for (int i = 0; y - i > newPos.y; i++) RemoveSnakeCollider(new Vector3(newPos.x, y - i + 0.5f, 0f)); 
-        }
-    }
-
-    void MoveSnakeHead()
-    {
-        float angle = MathF.Atan2(dir.y, dir.x) * Mathf.Rad2Deg;
-        snakeHead.transform.position = head - 0.05f * dir;
-        snakeHead.transform.rotation = Quaternion.Euler(0, 0, angle);
-    }
-
-    public void LengthenBody(float len)
+    void LengthenBody(float len)
     {
         if (turns.Count == 0) tail -= dir * len;
         else tail -= turns.Peek().Item2 * len;
